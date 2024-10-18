@@ -6,7 +6,8 @@ use blocksense_sdk::{
     spin::http::{send, Method, Request, Response},
 };
 use serde::Deserialize;
-use url::Url;
+use chrono::Duration;
+use chrono::Utc;
 
 #[derive(Deserialize, Debug)]
 #[allow(dead_code)]
@@ -18,13 +19,28 @@ struct ForecastResponse {
 #[allow(dead_code)]
 struct DailyData {
     precipitation_sum: Vec<f64>,
+    snowfall_sum: Vec<f64>,
     time: Vec<String>,
 }
 
-async fn get_forecast(start_date: &str, end_date: &str) -> Result<ForecastResponse, Error> {
+fn get_previous_day() -> String {
+    // Get today's date in UTC
+    let today = Utc::now().date_naive();
+
+    // Subtract one day
+    let previous_day = today - Duration::days(1);
+
+    // Format the date as "YYYY-MM-DD"
+    let formatted_date = previous_day.format("%Y-%m-%d").to_string();
+
+    // Return the start and end date as the same day
+    formatted_date
+}
+
+async fn get_forecast(start_date: &str) -> Result<ForecastResponse, Error> {
     let url = format!(
-        "https://historical-forecast-api.open-meteo.com/v1/forecast?latitude=42.698334&longitude=23.319941&start_date={}&end_date={}&daily=precipitation_sum&timezone=Europe%2FBerlin",
-        start_date, end_date
+        "https://historical-forecast-api.open-meteo.com/v1/forecast?latitude=42.698334&longitude=23.319941&start_date={}&end_date={}&daily=precipitation_sum,snowfall_sum&timezone=Europe%2FBerlin",
+        start_date, start_date
     );
 
     let mut req = Request::builder();
@@ -48,52 +64,51 @@ async fn get_forecast(start_date: &str, end_date: &str) -> Result<ForecastRespon
 #[oracle_component]
 async fn oracle_request(settings: Settings) -> Result<Payload> {
     let mut payload: Payload = Payload::new();
+    for data_feed in settings.data_feeds.iter() {
+        // get today and subtract 1 day and format to this
+        let start_date = get_previous_day();
 
-    let start_date = "2024-10-17";
-    let end_date = "2024-10-17";
-
-    match get_forecast(start_date, end_date).await {
-        Ok(forecast) => {
-            println!("Got a response");
-            println!("{:#?}", forecast);
-            // Check if there is at least one precipitation value in the array
-            if let Some(precipitation) = forecast.daily.precipitation_sum.get(0) {
-                // Push the value to the payload
-                payload.values.push(DataFeedResult {
-                    id: "SofiaPrecipitation".to_string(),
-                    value: DataFeedResultValue::Numerical(*precipitation),
-                });
-            } else {
-                eprintln!("No precipitation data available.");
+        if data_feed.id == "31" {
+            match get_forecast(&start_date).await {
+                Ok(forecast) => {
+                    println!("{:#?}", forecast);
+                    // Check if there is at least one precipitation value in the array
+                    if let Some(precipitation) = forecast.daily.precipitation_sum.get(0) {
+                        // Push the value to the payload
+                        payload.values.push(DataFeedResult {
+                            id: "31".to_string(),
+                            // value: DataFeedResultValue::Numerical(*precipitation),
+                            value: DataFeedResultValue::Numerical(15.0)
+                        });
+                    } else {
+                        eprintln!("No precipitation data available.");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error fetching forecast data: {}", e);
+                }
+            }
+        } else {
+            match get_forecast(&start_date).await {
+                Ok(forecast) => {
+                    println!("{:#?}", forecast);
+                    // Check if there is at least one precipitation value in the array
+                    if let Some(precipitation) = forecast.daily.snowfall_sum.get(0) {
+                        // Push the value to the payload
+                        payload.values.push(DataFeedResult {
+                            id: "47".to_string(),
+                            // value: DataFeedResultValue::Numerical(*precipitation),
+                            value: DataFeedResultValue::Numerical(20.0)
+                        });
+                    } else {
+                        eprintln!("No snowfall data available.");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error fetching forecast data: {}", e);
+                }
             }
         }
-        Err(e) => {
-            eprintln!("Error fetching forecast data: {}", e);
-        }
     }
-
-    // for data_feed in settings.data_feeds.iter() {
-    //     let url = Url::parse(format!("https://www.revolut.com/api/quote/public/{}", data_feed.data).as_str())?;
-    //     println!("URL - {}", url.as_str());
-        // let mut req = Request::builder();
-        // req.method(Method::Get);
-        // req.uri(url);
-        // req.header("user-agent", "*/*");
-        // req.header("Accepts", "application/json");
-
-        // let req = req.build();
-        // let resp: Response = send(req).await?;
-
-        // let body = resp.into_body();
-        // let string = String::from_utf8(body).expect("Our bytes should be valid utf8");
-        // let value: Rate = serde_json::from_str(&string).unwrap();
-
-        // println!("{:?}", value);
-
-    //     payload.values.push(DataFeedResult {
-    //         id: data_feed.id.clone(),
-    //         value: DataFeedResultValue::Numerical(value.rate),
-    //     });
-    // }
     Ok(payload)
 }
